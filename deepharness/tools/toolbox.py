@@ -5,11 +5,11 @@ import enum
 import inspect
 import types
 import typing
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
-from ..errors import ConfigurationError, ToolNotFoundError
+from ..errors import ConfigurationError, ToolDenied, ToolNotFoundError
 
 _NONE = type(None)
 _PRIMITIVES: dict[Any, str] = {
@@ -35,6 +35,11 @@ class Ctx:
 
     state: Any = None
     deps: Any = None
+
+
+Approver = Callable[[str, dict[str, Any]], bool | Awaitable[bool]]
+"""Rules on one gated call, given its name and arguments: True runs it, False
+raises ToolDenied. May be async."""
 
 
 @dataclass(slots=True)
@@ -70,9 +75,10 @@ def tool(
 
     Can be used bare (`@tool`) or with overrides (`@tool(name=..., description=...)`).
 
-    requires_approval=True gates every call on a human: the agent pauses before
-    running it and only runs it once approved. The gate lives on the tool rather
-    than in the prompt so a model cannot skip it by not asking.
+    requires_approval=True gates every call: a Toolbox given approve= checks
+    with it before running the call, and an Agent whose toolbox cannot ask
+    pauses instead. The gate lives on the tool rather than in the prompt so a
+    model cannot skip it by not asking.
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -173,14 +179,32 @@ def json_type(annotation: Any) -> dict[str, Any]:
 
 
 class Toolbox:
-    """Registry of tools that can be listed as schemas and invoked by name."""
+    """Registry of tools that can be listed as schemas and invoked by name.
 
-    __slots__ = ("_tools",)
+    approve= is called before each requires_approval call runs, so the gate
+    holds wherever the toolbox is called from - an Agent, a Graph node, or
+    plain code. How it decides is the caller's business. Without it the
+    toolbox runs every call it is given, and an Agent pauses on gated calls
+    before they get here.
+    """
 
-    def __init__(self, tools: Iterable[Callable[..., Any]] = ()) -> None:
+    __slots__ = ("_approve", "_tools")
+
+    def __init__(
+        self,
+        tools: Iterable[Callable[..., Any]] = (),
+        *,
+        approve: Approver | None = None,
+    ) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        self._approve = approve
         for func in tools:
             self.register(func)
+
+    @property
+    def can_ask(self) -> bool:
+        """Whether gated calls are decided here rather than paused on."""
+        return self._approve is not None
 
     def __len__(self) -> int:
         return len(self._tools)
@@ -234,7 +258,24 @@ class Toolbox:
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.to_schema() for spec in self._tools.values()]
 
-    async def call(self, name: str, *, ctx: Ctx | None = None, **kwargs: Any) -> Any:
+    def _gated(self, spec: ToolSpec, ask: bool | None) -> bool:
+        """Whether this call goes to the approver first.
+
+        ask overrides the tool's own flag, for a caller such as an Agent whose
+        permission rules have already decided this particular call.
+        """
+        if self._approve is None:
+            return False
+        return spec.requires_approval if ask is None else ask
+
+    async def call(
+        self,
+        name: str,
+        *,
+        ctx: Ctx | None = None,
+        ask: bool | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Invoke a tool, running a sync one off the event loop.
 
         The concurrency arun() promises comes from gathering a turn's tool calls,
@@ -243,6 +284,13 @@ class Toolbox:
         waiting alongside it.
         """
         spec = self.get(name)
+        if self._gated(spec, ask):
+            assert self._approve is not None
+            verdict = self._approve(name, dict(kwargs))
+            if inspect.isawaitable(verdict):
+                verdict = await verdict
+            if not verdict:
+                raise ToolDenied(name, kwargs)
         func, kwargs = spec.func, self._with_ctx(spec, kwargs, ctx)
         if inspect.iscoroutinefunction(inspect.unwrap(func)):
             return await func(**kwargs)
@@ -251,14 +299,36 @@ class Toolbox:
             return await result
         return result
 
-    def call_sync(self, name: str, *, ctx: Ctx | None = None, **kwargs: Any) -> Any:
+    def call_sync(
+        self,
+        name: str,
+        *,
+        ctx: Ctx | None = None,
+        ask: bool | None = None,
+        **kwargs: Any,
+    ) -> Any:
         spec = self.get(name)
+        if self._gated(spec, ask):
+            assert self._approve is not None
+            verdict = self._approve(name, dict(kwargs))
+            if inspect.isawaitable(verdict):
+                _close(verdict)
+                raise ConfigurationError(
+                    "the approve= callback is async; call_sync() needs a plain one"
+                )
+            if not verdict:
+                raise ToolDenied(name, kwargs)
         result = spec.func(**self._with_ctx(spec, kwargs, ctx))
         if inspect.isawaitable(result):
-            close = getattr(result, "close", None)
-            if close is not None:
-                close()
+            _close(result)
             raise ConfigurationError(
                 f"Tool '{name}' is async; use Agent.arun() instead of Agent.run()"
             )
         return result
+
+
+def _close(awaitable: Any) -> None:
+    """Close a coroutine that will never be awaited, so Python does not warn."""
+    close = getattr(awaitable, "close", None)
+    if close is not None:
+        close()
