@@ -236,6 +236,26 @@ state = await agent.arun(state.reject())  # records "Denied by the user." instea
 every pending call; pass one to rule on a single call. Resuming a paused run without deciding
 raises `ConfigurationError` rather than silently continuing.
 
+To decide during the run instead of pausing it, give the `Toolbox` an `approve=` callback. It is
+called with each gated call's name and arguments before the call runs, and may be `async`. `True`
+runs the call; `False` raises `ToolDenied`, which an `Agent` hands to the model as that call's
+result. How the callback decides is up to you:
+
+```python
+from deepharness.agent import Toolbox
+
+
+def approve(name: str, arguments: dict) -> bool:
+    return arguments["amount_usd"] <= 1_000
+
+
+agent = Agent(model, tools=Toolbox([wire_transfer], approve=approve))
+```
+
+The gate belongs to the toolbox, so it also holds when a `Graph` node or your own code calls
+`tools.call(...)` directly; catch `ToolDenied` there to decide what a refusal means. Without
+`approve=` the run pauses as above.
+
 The gate lives on the tool, not in the prompt, so a model cannot route around it by declining to
 ask. And if a turn requests a gated call alongside ordinary ones, **nothing** in that turn runs
 until the ruling — a half-applied turn the human is about to refuse would be worse than waiting.
