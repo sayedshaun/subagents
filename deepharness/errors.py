@@ -17,6 +17,7 @@ __all__ = [
     "ProviderError",
     "StepLimitExceeded",
     "TokenBudgetExceeded",
+    "ToolDenied",
     "ToolNotFoundError",
 ]
 
@@ -69,6 +70,19 @@ class MCPError(DeepHarnessError):
 
 class ProviderError(DeepHarnessError):
     """Raised when an LLM provider request fails after retries."""
+
+
+class ToolDenied(DeepHarnessError):
+    """Raised when a Toolbox's approve= callback refuses a gated call.
+
+    An error rather than a canned result, so the caller decides what a refusal
+    means; inside an Agent it reaches the model as that call's result.
+    """
+
+    def __init__(self, name: str, arguments: dict[str, Any]):
+        self.name = name
+        self.arguments = arguments
+        super().__init__(f"call to {name!r} was not approved")
 
 
 class HumanInputRequired(DeepHarnessError):
