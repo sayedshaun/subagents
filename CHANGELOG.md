@@ -3,6 +3,22 @@
 Notable changes, newest first. This project is pre-1.0: while the major version is `0`, a
 breaking change raises the minor version.
 
+## Unreleased
+
+### Breaking
+
+- `save_session` and `load_session` are removed. Where a run is stored is the application's
+  choice, so the library keeps only the serialization: `state.to_dict()` and
+  `AgentState.from_dict(data)`. The equivalent of the old pair is
+  `Path(p).write_text(json.dumps(state.to_dict()))` and
+  `AgentState.from_dict(json.loads(Path(p).read_text()))`.
+
+### Added
+
+- `Toolbox(approve=fn)` checks `fn(name, arguments)` before running a `requires_approval`
+  call, wherever the toolbox is called from; a refusal raises `ToolDenied`. Without it an
+  `Agent` pauses as before.
+
 ## 0.3.0 — 2026-09-19
 
 The release that makes an agent usable for long runs: tools that work in a directory, rules
