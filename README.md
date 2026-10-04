@@ -120,7 +120,8 @@ A full walkthrough — approvals, context, sessions, and a sixty-line script tha
 
 Every path is resolved inside the workspace root, `deny` beats `allow` beats `ask`, and a run
 that needs a human stops with `stop_reason == "paused"` — resumable later, in another process,
-because `save_session`/`load_session` round-trip the whole state, pending approval included.
+because `state.to_dict()`/`AgentState.from_dict()` round-trip the whole state, pending approval
+included.
 
 The rest of what a long run needs:
 

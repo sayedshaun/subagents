@@ -291,36 +291,28 @@ The difference matters: an approval defers execution, a question substitutes a r
 
 ## Session persistence
 
-`save_session`/`load_session` round-trip a whole `AgentState` through JSON, so a run resumes
-across process runs:
+`state.to_dict()` turns a whole `AgentState` into JSON-able data and `AgentState.from_dict()`
+reads it back, so a run resumes across processes. Where you keep it — a file, a database row,
+a queue message — is up to you:
 
 ```python
-from deepharness import Agent, Message
-from deepharness.agent import load_session, save_session
+import json
+from pathlib import Path
 
-state = load_session("session.json")  # an empty AgentState if the file is new
-state.messages.append(Message.human("Continue where we left off.").to_dict())
+from deepharness import AgentState
 
-state = await agent.arun(state)
-save_session("session.json", state)
-```
+Path("session.json").write_text(json.dumps(state.to_dict()))
 
-The whole state is saved, not just the transcript — usage, stop reason, and any call
-[paused on an approval](#human-in-the-loop). That last one is the point: a run waiting on a
-human is the one most worth resuming later, and it is the one a messages-only file cannot
-carry.
-
-```python
-state = load_session("session.json")
+# later, in another process
+state = AgentState.from_dict(json.loads(Path("session.json").read_text()))
 if state.stop_reason == "paused":
     state = await agent.arun(state.approve())  # the gated tool runs now
 ```
 
-`save_session` also accepts a bare message list for the conversational case, and
-`load_session` reads a file holding a bare JSON array as a transcript — so a session written
-by hand, or by a version that saved messages alone, still loads. Structured `output` is stored
-as plain data and comes back as a dict rather than your dataclass; reconstructing the type
-would mean trusting an import path out of a file.
+The whole state is kept, not just the transcript — usage, stop reason, and any call
+[paused on an approval](#human-in-the-loop), which is what a run waiting on a human needs to
+resume. Structured `output` is stored as plain data and comes back as a dict rather than your
+dataclass; reconstructing the type would mean trusting an import path out of stored data.
 
 ## Messages
 

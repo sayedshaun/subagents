@@ -338,19 +338,16 @@ text is still sent as a plain string, so nothing changes for an ordinary convers
 The pause is a returned state, not an exception, so it survives a process boundary:
 
 ```python
-from deepharness.agent import load_session, save_session
-
 state = await agent.arun("Deploy the release branch")
 if state.stop_reason == "paused":
-    save_session("run.json", state)  # the whole state, pending approval included
+    store.put("run", json.dumps(state.to_dict()))  # pending approval included
 
 # ... in another process, once someone has looked at it
-state = load_session("run.json")
+state = AgentState.from_dict(json.loads(store.get("run")))
 state = await agent.arun(state.approve())  # the gated call runs now
 ```
 
-`save_session` takes a bare message list too, and `load_session` reads an older messages-only
-file, so existing sessions keep loading. See
+`store` is whatever you keep runs in. See
 [session persistence](guide/agents.md#session-persistence).
 
 ## Tools from an MCP server

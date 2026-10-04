@@ -7,7 +7,7 @@ so an import path says which part of the library a name belongs to.
 
 ```python
 from deepharness import Agent, Graph, Message, OpenAI, tool  # ~27 high-level names
-from deepharness.agent import ContextPolicy, StepStarted, save_session
+from deepharness.agent import ContextPolicy, StepStarted
 from deepharness.graph import concat, merge_dicts
 from deepharness.providers import Caching, Fallback, Image, Text
 from deepharness.tools import Permissions, ToolName, file_tools, shell_tool
@@ -18,7 +18,7 @@ from deepharness.errors import ProviderError
 | Module | Holds |
 | --- | --- |
 | `deepharness` | `Agent`, `AgentState`, `Budget`, `Message`, `Toolbox`, `Ctx`, `tool`, `Finished`, `TextDelta`, `Graph`, `Executor`, `DeepHarnessError`, and all 15 providers |
-| `deepharness.agent` | the loop's own types — `ContextPolicy`, `estimate_tokens`, the progress events, `StopReason`, `PendingHumanInput`, `save_session`/`load_session`, `ToolSpec`, `FINAL_TOOL` |
+| `deepharness.agent` | the loop's own types — `ContextPolicy`, `estimate_tokens`, the progress events, `StopReason`, `PendingHumanInput`, `ToolSpec`, `FINAL_TOOL` |
 | `deepharness.graph` | `NodeSpec`, `concat`, `merge_dicts` |
 | `deepharness.providers` | `LLM` and the wire types, content blocks (`Text`, `Image`, `Document`, `Thinking`), `ReasoningLevel`, and the wrappers `Caching`/`Fallback`/`RateLimited`/`Retrying`/`Wrapping` |
 | `deepharness.tools` | `Permissions`, `Rule`, `ToolName`, `Workspace`, `file_tools`, `shell_tool`, `MCPServer`, `Transport`, `TavilySearch` |
@@ -84,8 +84,9 @@ What a run consumed and produced. `stop_reason` is one of `"answer"`, `"step_bud
 `stop_reason == "answer"`.
 `AgentState.of(value)` builds one from a prompt string, a list of messages, a dict of known
 fields, or an existing state; an unknown dict key raises `ConfigurationError`.
-`to_dict()`/`from_dict(data)` round-trip the whole state as JSON-able data — what
-`save_session`/`load_session` use.
+`to_dict()`/`from_dict(data)` round-trip the whole state as JSON-able data, including any
+call paused on an approval, so a run can be stored wherever the caller likes and resumed in
+another process. Structured `output` is stored as plain data and returns as a dict.
 
 `approve(call_id=None)` / `reject(call_id=None)` rule on calls waiting in `paused`, returning the
 state so a resume reads as `await agent.arun(state.approve())`. Both raise `ConfigurationError`
@@ -194,19 +195,6 @@ style dict, so it's interchangeable with hand-built message dicts anywhere one i
 | `Message.human(content: str)` | `{"role": "user", "content": ...}` |
 | `Message.ai(content: str, *, tool_calls: list[dict] \| None = None)` | `{"role": "assistant", "content": ...}` |
 | `Message.tool(content: str, *, name: str, call_id: str \| None = None)` | `{"role": "tool", "name": ..., "content": ...}` |
-
-### `save_session` / `load_session`
-
-```python
-save_session(path: str, session: AgentState | list[dict]) -> None
-load_session(path: str) -> AgentState  # empty AgentState if the file doesn't exist
-```
-
-Round-trips a whole `AgentState` through JSON so a run can resume across process runs —
-including `usage`, `stop_reason` and any call paused on an approval, so a run waiting on a
-human can be resumed with `load_session(path).approve()`. A bare message list is accepted on
-the way in, and a file holding a bare JSON array is read as a transcript. Structured `output`
-is stored as plain data and returns as a dict.
 
 ## Tools
 
