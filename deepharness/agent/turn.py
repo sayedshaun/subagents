@@ -7,7 +7,7 @@ asked for. Keeping them here leaves loop.py to the loop itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..errors import ConfigurationError, HumanInputRequired
@@ -99,6 +99,8 @@ class Ruling:
     allowed: list[Any]
     paused: list[PendingHumanInput]
     denied: list[Any]
+    asking: list[Any] = field(default_factory=list)
+    """Gated calls the toolbox will put to its approver as it runs them."""
 
 
 def rule(
@@ -109,15 +111,19 @@ def rule(
     Decided before dispatch rather than inside the tool, so a gated call cannot
     run by accident - and the model cannot route around the gate by declining to
     ask. A policy decides per call; without one, or for a call no rule matches,
-    the tool's own requires_approval stands.
+    the tool's own requires_approval stands. A toolbox that can ask settles an
+    "ask" itself, so the call goes to it rather than pausing the run.
     """
     allowed: list[Any] = []
     paused: list[PendingHumanInput] = []
     denied: list[Any] = []
+    asking: list[Any] = []
     for call in calls:
         match _decide(tools, call, permissions):
             case "deny":
                 denied.append(call)
+            case "ask" if tools.can_ask:
+                asking.append(call)
             case "ask":
                 arguments = dict(call.arguments)
                 paused.append(
@@ -130,7 +136,7 @@ def rule(
                 )
             case _:
                 allowed.append(call)
-    return Ruling(allowed=allowed, paused=paused, denied=denied)
+    return Ruling(allowed=allowed, paused=paused, denied=denied, asking=asking)
 
 
 def _decide(tools: Toolbox, call: Any, permissions: Permissions | None) -> Decision:
