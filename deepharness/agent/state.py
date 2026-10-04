@@ -7,9 +7,7 @@ produce, and a session is that transcript on disk.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
-from pathlib import Path
 from typing import Any, Literal
 
 from ..errors import ConfigurationError
@@ -218,7 +216,10 @@ class AgentState:
         return self.stop_reason == "answer"
 
     def to_dict(self) -> dict[str, Any]:
-        """The whole state as JSON-able data, for a session on disk.
+        """The whole state as JSON-able data, for storing a run to resume later.
+
+        Where it is stored is the caller's choice - a file, a database row, a
+        queue message; the library only promises that from_dict() reads it back.
 
         Structured `output` is flattened to plain data: reconstructing the
         dataclass would mean storing its import path and trusting it on the way
@@ -296,30 +297,3 @@ class Finished:
     """
 
     state: AgentState
-
-
-def save_session(
-    path: str, session: AgentState | list[Message | dict[str, Any]]
-) -> None:
-    """Write a run to a JSON file, so it can be resumed in another process.
-
-    Takes a whole AgentState, or a bare message list for the conversational
-    case. The state is saved in full - usage, stop reason and any call paused on
-    an approval - because a run waiting on a human is the one most worth
-    resuming later, and a transcript alone cannot carry what it is waiting for.
-    """
-    Path(path).write_text(json.dumps(AgentState.of(session).to_dict(), indent=2))
-
-
-def load_session(path: str) -> AgentState:
-    """Read a session written by save_session(), resumable as it stands.
-
-    Returns an empty state when the file does not exist yet, so a first run
-    needs no special case at the call site. A file holding a bare JSON array is
-    read as a transcript, so one written by hand - or by an older version that
-    saved messages alone - still loads.
-    """
-    file = Path(path)
-    if not file.exists():
-        return AgentState()
-    return AgentState.of(json.loads(file.read_text()))

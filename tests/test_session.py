@@ -1,4 +1,6 @@
-"""Saving a run to disk and picking it up again, pause and all."""
+"""A run stored as data and picked up again, pause and all."""
+
+import json
 
 import pytest
 
@@ -7,8 +9,6 @@ from deepharness.agent import (
     AgentState,
     Message,
     PendingHumanInput,
-    load_session,
-    save_session,
     tool,
 )
 from deepharness.errors import ConfigurationError
@@ -34,43 +34,28 @@ def deploy(target: str) -> str:
     return f"deployed to {target}"
 
 
-def test_save_and_load_round_trip(tmp_path):
-    path = tmp_path / "session.json"
+def round_trip(state: AgentState) -> AgentState:
+    """Through JSON text, as any store the caller picks would see it."""
+    return AgentState.from_dict(json.loads(json.dumps(state.to_dict())))
+
+
+def test_messages_round_trip():
     messages = [
         Message.system("be helpful").to_dict(),
         Message.human("hi").to_dict(),
         Message.ai("hello!").to_dict(),
     ]
 
-    save_session(str(path), messages)
-    loaded = load_session(str(path))
-
-    assert loaded.messages == messages
+    assert round_trip(AgentState(messages=messages)).messages == messages
 
 
-def test_load_missing_session_returns_an_empty_state(tmp_path):
-    path = tmp_path / "does-not-exist.json"
-
-    assert load_session(str(path)) == AgentState()
-
-
-def test_save_creates_human_readable_json(tmp_path):
-    path = tmp_path / "session.json"
-
-    save_session(str(path), [Message.human("hi")])
-
-    assert '"role": "user"' in path.read_text()
+def test_a_bare_message_list_builds_a_state():
+    assert AgentState.of([{"role": "user", "content": "hi"}]).messages == [
+        {"role": "user", "content": "hi"}
+    ]
 
 
-def test_a_bare_message_array_still_loads(tmp_path):
-    path = tmp_path / "legacy.json"
-    path.write_text('[{"role": "user", "content": "hi"}]')
-
-    assert load_session(str(path)).messages == [{"role": "user", "content": "hi"}]
-
-
-def test_saving_keeps_usage_and_stop_reason(tmp_path):
-    path = tmp_path / "session.json"
+def test_usage_and_stop_reason_survive():
     state = AgentState(
         messages=[Message.human("hi").to_dict()],
         output="hello",
@@ -78,26 +63,20 @@ def test_saving_keeps_usage_and_stop_reason(tmp_path):
         stop_reason="answer",
     )
 
-    save_session(str(path), state)
-
-    assert load_session(str(path)) == state
+    assert round_trip(state) == state
 
 
-def test_structured_output_is_saved_as_plain_data(tmp_path):
+def test_structured_output_is_stored_as_plain_data():
     from dataclasses import dataclass
 
     @dataclass
     class Answer:
         city: str
 
-    path = tmp_path / "session.json"
-    save_session(str(path), AgentState(output=Answer(city="Oslo")))
-
-    assert load_session(str(path)).output == {"city": "Oslo"}
+    assert round_trip(AgentState(output=Answer(city="Oslo"))).output == {"city": "Oslo"}
 
 
-def test_a_run_paused_on_an_approval_resumes_from_disk(tmp_path):
-    path = tmp_path / "session.json"
+def test_a_run_paused_on_an_approval_resumes_from_stored_data():
     model = Scripted(
         [
             CompletionResponse(
@@ -113,10 +92,9 @@ def test_a_run_paused_on_an_approval_resumes_from_disk(tmp_path):
 
     paused = agent.run("deploy to prod")
     assert paused.stop_reason == "paused"
-    save_session(str(path), paused)
 
-    # A different process: the pause has to survive the file, not memory.
-    resumed = load_session(str(path))
+    # A different process: the pause has to survive serialization, not memory.
+    resumed = round_trip(paused)
     assert resumed.paused == [
         PendingHumanInput(
             call_id="1",
@@ -132,9 +110,6 @@ def test_a_run_paused_on_an_approval_resumes_from_disk(tmp_path):
     assert "deployed to prod" in state.messages[-2]["content"]
 
 
-def test_loading_a_file_with_an_unexpected_key_is_an_error(tmp_path):
-    path = tmp_path / "session.json"
-    path.write_text('{"messages": [], "temperature": 0.5}')
-
+def test_data_with_an_unexpected_key_is_an_error():
     with pytest.raises(ConfigurationError, match="unknown state keys"):
-        load_session(str(path))
+        AgentState.from_dict({"messages": [], "temperature": 0.5})
