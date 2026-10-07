@@ -97,10 +97,11 @@ class Ruling:
     """One turn's calls, split by what the run is allowed to do with them."""
 
     allowed: list[Any]
+    """Calls to run, in the model's order - run() executes them in sequence."""
     paused: list[PendingHumanInput]
     denied: list[Any]
-    asking: list[Any] = field(default_factory=list)
-    """Gated calls the toolbox will put to its approver as it runs them."""
+    ask: list[bool] = field(default_factory=list)
+    """Per allowed call, whether the toolbox puts it to its approver first."""
 
 
 def rule(
@@ -117,13 +118,14 @@ def rule(
     allowed: list[Any] = []
     paused: list[PendingHumanInput] = []
     denied: list[Any] = []
-    asking: list[Any] = []
+    ask: list[bool] = []
     for call in calls:
         match _decide(tools, call, permissions):
             case "deny":
                 denied.append(call)
             case "ask" if tools.can_ask:
-                asking.append(call)
+                allowed.append(call)
+                ask.append(True)
             case "ask":
                 arguments = dict(call.arguments)
                 paused.append(
@@ -136,7 +138,8 @@ def rule(
                 )
             case _:
                 allowed.append(call)
-    return Ruling(allowed=allowed, paused=paused, denied=denied, asking=asking)
+                ask.append(False)
+    return Ruling(allowed=allowed, paused=paused, denied=denied, ask=ask)
 
 
 def _decide(tools: Toolbox, call: Any, permissions: Permissions | None) -> Decision:

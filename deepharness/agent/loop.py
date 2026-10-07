@@ -328,13 +328,11 @@ class Agent:
                 turn.record_unrun(messages, ruling.allowed, turn.NOT_RUN)
                 return self._result(state, messages, "", "paused", paused=ruling.paused)
 
-            calls = [*ruling.allowed, *ruling.asking]
-            if calls:
-                ask = [False] * len(ruling.allowed) + [True] * len(ruling.asking)
-                results = yield _Dispatch(calls, ask)
+            if ruling.allowed:
+                results = yield _Dispatch(ruling.allowed, ruling.ask)
                 pending = turn.record_results(
                     messages,
-                    calls,
+                    ruling.allowed,
                     results,
                     limit=self._context.tool_result_chars,
                 )

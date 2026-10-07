@@ -282,6 +282,42 @@ async def test_a_permission_ask_on_an_ungated_tool_goes_to_the_approver():
     assert any("ToolDenied" in m["content"] for m in state.messages)
 
 
+def test_calls_the_toolbox_asks_about_keep_the_models_order():
+    ran = []
+
+    @tool(requires_approval=True)
+    def write_file() -> str:
+        """Write the file."""
+        ran.append("write_file")
+        return "written"
+
+    @tool
+    def run_tests() -> str:
+        """Run the tests."""
+        ran.append("run_tests")
+        return "passed"
+
+    provider = ScriptedProvider(
+        [
+            CompletionResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="a", name="write_file", arguments={}),
+                    ToolCall(id="b", name="run_tests", arguments={}),
+                ],
+            ),
+            CompletionResponse(content="done"),
+        ]
+    )
+    toolbox = Toolbox([write_file, run_tests], approve=lambda name, args: True)
+
+    state = Agent(provider, tools=toolbox).run("write then test")
+
+    assert ran == ["write_file", "run_tests"]
+    results = [m["tool_call_id"] for m in state.messages if m["role"] == "tool"]
+    assert results == ["a", "b"]
+
+
 def test_a_toolbox_that_can_ask_works_on_the_sync_path():
     provider = ScriptedProvider([transfer_turn(), CompletionResponse(content="Sent.")])
     agent = Agent(
