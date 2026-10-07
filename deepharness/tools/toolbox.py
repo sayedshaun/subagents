@@ -258,15 +258,18 @@ class Toolbox:
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.to_schema() for spec in self._tools.values()]
 
-    def _gated(self, spec: ToolSpec, ask: bool | None) -> bool:
-        """Whether this call goes to the approver first.
+    def _verdict(
+        self, spec: ToolSpec, ask: bool | None, kwargs: dict[str, Any]
+    ) -> bool | Awaitable[bool]:
+        """The approver's ruling on this call, or True when it is not gated.
 
         ask overrides the tool's own flag, for a caller such as an Agent whose
         permission rules have already decided this particular call.
         """
-        if self._approve is None:
-            return False
-        return spec.requires_approval if ask is None else ask
+        gated = spec.requires_approval if ask is None else ask
+        if self._approve is None or not gated:
+            return True
+        return self._approve(spec.name, dict(kwargs))
 
     async def call(
         self,
@@ -284,13 +287,11 @@ class Toolbox:
         waiting alongside it.
         """
         spec = self.get(name)
-        if self._gated(spec, ask):
-            assert self._approve is not None
-            verdict = self._approve(name, dict(kwargs))
-            if inspect.isawaitable(verdict):
-                verdict = await verdict
-            if not verdict:
-                raise ToolDenied(name, kwargs)
+        verdict = self._verdict(spec, ask, kwargs)
+        if inspect.isawaitable(verdict):
+            verdict = await verdict
+        if not verdict:
+            raise ToolDenied(name, kwargs)
         func, kwargs = spec.func, self._with_ctx(spec, kwargs, ctx)
         if inspect.iscoroutinefunction(inspect.unwrap(func)):
             return await func(**kwargs)
@@ -308,16 +309,14 @@ class Toolbox:
         **kwargs: Any,
     ) -> Any:
         spec = self.get(name)
-        if self._gated(spec, ask):
-            assert self._approve is not None
-            verdict = self._approve(name, dict(kwargs))
-            if inspect.isawaitable(verdict):
-                _close(verdict)
-                raise ConfigurationError(
-                    "the approve= callback is async; call_sync() needs a plain one"
-                )
-            if not verdict:
-                raise ToolDenied(name, kwargs)
+        verdict = self._verdict(spec, ask, kwargs)
+        if inspect.isawaitable(verdict):
+            _close(verdict)
+            raise ConfigurationError(
+                "the approve= callback is async; call_sync() needs a plain one"
+            )
+        if not verdict:
+            raise ToolDenied(name, kwargs)
         result = spec.func(**self._with_ctx(spec, kwargs, ctx))
         if inspect.isawaitable(result):
             _close(result)
