@@ -3,10 +3,18 @@ from .mcp import MCPServer, MCPTool, Transport
 from .permissions import Decision, Permissions, Rule, RuleLike, ToolName
 from .shell import shell_tool
 from .tavily import SearchResult, TavilySearch, format_results
-from .toolbox import Ctx, Toolbox, ToolSpec, json_type, tool
+from .toolbox import (
+    Approver,
+    Ctx,
+    Toolbox,
+    ToolSpec,
+    json_type,
+    tool,
+)
 from .workspace import Workspace
 
 __all__ = [
+    "Approver",
     "Ctx",
     "Decision",
     "MCPServer",

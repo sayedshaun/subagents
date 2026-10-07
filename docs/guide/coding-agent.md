@@ -180,12 +180,15 @@ The pause is a returned state, not an exception, so the whole run survives a pro
 approval included:
 
 ```python
-from deepharness.agent import load_session, save_session
+import json
+from pathlib import Path
 
-save_session("run.json", state)
+from deepharness import AgentState
+
+Path("run.json").write_text(json.dumps(state.to_dict()))
 
 # tomorrow, in another process
-state = load_session("run.json")
+state = AgentState.from_dict(json.loads(Path("run.json").read_text()))
 if state.stop_reason == "paused":
     state = await agent.arun(state.approve())
 ```
@@ -194,9 +197,11 @@ if state.stop_reason == "paused":
 
 ```python
 import asyncio
+import json
+from pathlib import Path
 
 from deepharness import Agent, AgentState, OpenAI
-from deepharness.agent import ContextPolicy, load_session, save_session
+from deepharness.agent import ContextPolicy
 from deepharness.tools import Permissions, Rule, ToolName, file_tools, shell_tool
 
 SYSTEM = """You are a coding agent working inside one repository.
@@ -206,7 +211,7 @@ read_file before an edit, edit_file for part of a file and write_file for a new
 one, run_command for anything else. Keep prose short - the tool calls show your
 work."""
 
-SESSION = "run.json"
+SESSION = Path("run.json")
 
 
 def build(root: str = ".") -> Agent:
@@ -245,12 +250,16 @@ async def drive(agent: Agent, state: AgentState) -> AgentState:
 
 async def main() -> None:
     agent = build(".")
-    state = load_session(SESSION)
+    state = (
+        AgentState.from_dict(json.loads(SESSION.read_text()))
+        if SESSION.exists()
+        else AgentState()
+    )
     while (prompt := input("\n> ").strip()) not in ("", "quit"):
         state.messages.append({"role": "user", "content": prompt})
         state = await drive(agent, state)
         print(f"\n{state.output}")
-        save_session(SESSION, state)
+        SESSION.write_text(json.dumps(state.to_dict()))
 
 
 asyncio.run(main())

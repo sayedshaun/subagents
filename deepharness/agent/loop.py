@@ -56,6 +56,8 @@ class _Dispatch:
     """One turn's tool calls, for the driver to run however it runs them."""
 
     calls: list[Any]
+    ask: list[bool]
+    """Per call, whether the toolbox puts it to its approver first."""
 
 
 class Agent:
@@ -92,7 +94,8 @@ class Agent:
     Pausing has two flavours, and they resolve differently: a tool marked
     requires_approval has not run yet (approve it and it runs), while a tool
     raising HumanInputRequired is asking a question (your answer becomes its
-    result). See deepharness/agent/turn.py.
+    result). See deepharness/agent/turn.py. A Toolbox given approve= asks
+    about gated calls itself, so the run carries on instead of pausing.
     """
 
     __slots__ = (
@@ -263,7 +266,8 @@ class Agent:
         """
         approved = turn.settle(state, messages, self._name)
         if approved:
-            results = yield _Dispatch(approved)
+            # A human already approved these; the toolbox must not ask again.
+            results = yield _Dispatch(approved, [False] * len(approved))
             turn.record_results(
                 messages, approved, results, limit=self._context.tool_result_chars
             )
@@ -323,7 +327,7 @@ class Agent:
                 return self._result(state, messages, "", "paused", paused=ruling.paused)
 
             if ruling.allowed:
-                results = yield _Dispatch(ruling.allowed)
+                results = yield _Dispatch(ruling.allowed, ruling.ask)
                 pending = turn.record_results(
                     messages,
                     ruling.allowed,
@@ -402,8 +406,10 @@ class Agent:
                         yield ToolStarted(call.name, call.arguments, call.id)
                     outcome = await asyncio.gather(
                         *(
-                            self._call_tool(call.name, call.arguments, ctx)
-                            for call in request.calls
+                            self._call_tool(call.name, call.arguments, ctx, ask)
+                            for call, ask in zip(
+                                request.calls, request.ask, strict=True
+                            )
                         )
                     )
                     for call, result in zip(request.calls, outcome, strict=True):
@@ -441,9 +447,11 @@ class Agent:
                             outcome = event.response
                 else:
                     results: list[Any] = []
-                    for call in request.calls:
+                    for call, ask in zip(request.calls, request.ask, strict=True):
                         yield ToolStarted(call.name, call.arguments, call.id)
-                        result = self._call_tool_sync(call.name, call.arguments, ctx)
+                        result = self._call_tool_sync(
+                            call.name, call.arguments, ctx, ask
+                        )
                         results.append(result)
                         if (finished := self._finished(call, result)) is not None:
                             yield finished
@@ -477,17 +485,23 @@ class Agent:
         content, failed = turn.render(result, limit=self._context.tool_result_chars)
         return ToolFinished(call.name, content, failed, call.id)
 
-    async def _call_tool(self, name: str, arguments: dict[str, Any], ctx: Ctx) -> Any:
+    async def _call_tool(
+        self, name: str, arguments: dict[str, Any], ctx: Ctx, ask: bool = False
+    ) -> Any:
+        # ask is explicit either way: the permission rules have already decided
+        # this call, and an allow rule must not be re-asked by the toolbox.
         try:
-            return await self._tools.call(name, ctx=ctx, **arguments)
+            return await self._tools.call(name, ctx=ctx, ask=ask, **arguments)
         except ConfigurationError:
             raise
         except Exception as exc:  # noqa: BLE001 - see turn.record_results
             return exc
 
-    def _call_tool_sync(self, name: str, arguments: dict[str, Any], ctx: Ctx) -> Any:
+    def _call_tool_sync(
+        self, name: str, arguments: dict[str, Any], ctx: Ctx, ask: bool = False
+    ) -> Any:
         try:
-            return self._tools.call_sync(name, ctx=ctx, **arguments)
+            return self._tools.call_sync(name, ctx=ctx, ask=ask, **arguments)
         except ConfigurationError:
             raise
         except Exception as exc:  # noqa: BLE001 - see turn.record_results

@@ -181,9 +181,11 @@ class LLM(ABC):
 
     Deliberately narrow and transport-agnostic. A provider does not have to
     speak HTTP - a local model, a fake for tests, or a queue-backed worker
-    implements these four methods and works everywhere. Vendors that do speak
-    HTTP share their request sequence through RestCompletions (see rest.py)
-    rather than through this class.
+    implements generate() and agenerate() and works everywhere; the streaming
+    methods default to delivering the whole turn as one delta, so only a backend
+    that really streams overrides them. Vendors that do speak HTTP share their
+    request sequence through RestCompletions (see rest.py) rather than through
+    this class.
 
     __slots__ is empty here rather than absent: a base class without it hands
     every subclass a __dict__, which would make the providers' own __slots__
