@@ -56,11 +56,8 @@ class _Dispatch:
     """One turn's tool calls, for the driver to run however it runs them."""
 
     calls: list[Any]
-    ask: list[bool] | None = None
+    ask: list[bool]
     """Per call, whether the toolbox puts it to its approver first."""
-
-    def asks(self) -> list[bool]:
-        return self.ask or [False] * len(self.calls)
 
 
 class Agent:
@@ -269,7 +266,8 @@ class Agent:
         """
         approved = turn.settle(state, messages, self._name)
         if approved:
-            results = yield _Dispatch(approved)
+            # A human already approved these; the toolbox must not ask again.
+            results = yield _Dispatch(approved, [False] * len(approved))
             turn.record_results(
                 messages, approved, results, limit=self._context.tool_result_chars
             )
@@ -410,7 +408,7 @@ class Agent:
                         *(
                             self._call_tool(call.name, call.arguments, ctx, ask)
                             for call, ask in zip(
-                                request.calls, request.asks(), strict=True
+                                request.calls, request.ask, strict=True
                             )
                         )
                     )
@@ -449,7 +447,7 @@ class Agent:
                             outcome = event.response
                 else:
                     results: list[Any] = []
-                    for call, ask in zip(request.calls, request.asks(), strict=True):
+                    for call, ask in zip(request.calls, request.ask, strict=True):
                         yield ToolStarted(call.name, call.arguments, call.id)
                         result = self._call_tool_sync(
                             call.name, call.arguments, ctx, ask
